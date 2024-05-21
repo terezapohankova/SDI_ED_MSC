@@ -64,7 +64,7 @@ class Tool(object):
         
         # Name of output Table 
         param4 = arcpy.Parameter(
-            displayName="Name of Output Table",
+            displayName="Path to Output Table Name",
             name="output_table",
             datatype="GPString",
             parameterType="Required",

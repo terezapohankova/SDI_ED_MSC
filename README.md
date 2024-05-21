@@ -30,3 +30,8 @@ https://github.com/terezapohankova/edge_density/assets/60270092/82909cd1-7c7a-4c
 Structure of Output Table in .xlsx format is
 |FID              |GRID ID            |Edge Density        |
 |-----------------------|----------------|----------------|
+
+
+# Video tutorial (adding script to ArcGIS Pro and launching)
+https://github.com/terezapohankova/edge_density/assets/60270092/e3808940-7119-4d95-9a1b-3ff700203f9d
+

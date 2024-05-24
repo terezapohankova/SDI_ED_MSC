@@ -31,7 +31,7 @@ class Tool(object):
         param0 = arcpy.Parameter(
             displayName="Input Layer",
             name="input_layer",
-            datatype="DEShapefile",
+            datatype=["DEShapeFile","DEFeatureClass"],
             parameterType="Required",
             direction="Input")
         
@@ -40,7 +40,7 @@ class Tool(object):
         param1 = arcpy.Parameter(
             displayName="Output Layer",
             name="out_features",
-            datatype="DEShapefile",
+            datatype=["DEShapeFile","DEFeatureClass"],
             parameterType="Required",
             direction="Output")
         

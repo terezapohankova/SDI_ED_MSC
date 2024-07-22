@@ -2,7 +2,7 @@
 
 import arcpy
 import math
-
+import sys
 
 
 class Toolbox(object):
@@ -33,7 +33,8 @@ class Tool(object):
             name="input_layer",
             datatype=["DEShapeFile","DEFeatureClass"],
             parameterType="Required",
-            direction="Input")
+            direction="Input"
+            )
         
      
         # Output SHP Layer
@@ -111,11 +112,15 @@ class Tool(object):
         
         GRID_AREA_FIELD_NAME = "A_GRID"
         GRID_LENGTH_FIELD_NAME = "L_GRID" # perimeter of gridcell (all sides)
+        
+        #names for tool polygon neighbours to detect shared borders
+        SHARED_BORDER_FIELD_NAME = "LENGTH"
+        SHARED_BORDER_ID = "src_Id"
                 
         ED_FIELD_NAME = "EDGE_DENS"
         
         # Define datype for fields
-        FIELD_TYPE = "FLOAT"
+        FIELD_TYPE = "DOUBLE"
       
         # Create copy of input layer to preserve original data
         input_layer_copy = arcpy.Copy_management(
@@ -151,6 +156,25 @@ class Tool(object):
             input_layer_copy, 
             GRID_LENGTH_FIELD_NAME, 
             FIELD_TYPE)
+        
+        # get length of shared border between the patches
+        polygon_neighb =  r"in_memory/polygon_neib"
+        arcpy.analysis.PolygonNeighbors(
+            OUTPUT_LAYER,
+            polygon_neighb,
+            GRID_ID,
+            area_overlap = "NO_AREA_OVERLAP",
+            both_sides = "NO_BOTH_SIDES",
+            out_area_units = "SQUARE_METERS"
+        )
+        
+        arcpy.management.JoinField(
+            OUTPUT_LAYER,
+            GRID_ID,
+            polygon_neighb,
+            SHARED_BORDER_ID,
+            [SHARED_BORDER_FIELD_NAME]
+        )
     
         # calculate area of land patch and write it into column
         arcpy.management.CalculateGeometryAttributes(
@@ -202,10 +226,15 @@ class Tool(object):
         
         # calulate EDGE INDEX
         # (total length of land patches - perimeter of grid cell) / grid area  
+        
+        ## SUM_{LAND_LENGTH_FIELD_NAME} - sum of lengths of border in the grid 
+        ## GRID_LENGTH_FIELD_NAME       - length of perimeter of the grid cell (for squares -> 4 * grid_length)
+        ## SHARED_BORDER_FIELD_NAME     - length of inside borders between patches; length of shared border within one cell
+        ## GRID_AREA_FIELD_NAME         - area of the grid cell
         arcpy.management.CalculateField(
            OUTPUT_LAYER,
            ED_FIELD_NAME,
-           expression=f"(!SUM_{LAND_LENGTH_FIELD_NAME}! - !{GRID_LENGTH_FIELD_NAME}!) / !{GRID_AREA_FIELD_NAME}!",
+           expression=f"(!SUM_{LAND_LENGTH_FIELD_NAME}! - !{GRID_LENGTH_FIELD_NAME}! -!{SHARED_BORDER_FIELD_NAME}!) / !{GRID_AREA_FIELD_NAME}!",
            expression_type="PYTHON"           
         )
         

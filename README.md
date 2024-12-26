@@ -21,16 +21,7 @@ https://github.com/terezapohankova/edge_density/assets/60270092/82909cd1-7c7a-4c
 
 
 # Output Data
-* Output table is aggregated by Grid ID (each row corresponds to one ID number)
-
-|Paramater              |DataType            |Note        |
-|-----------------------|----------------|----------------|
-|Output Table          	|String          | in .xlsx format
-
-Structure of Output Table in .xlsx format is
-|FID              |GRID ID            |Edge Density        |
-|-----------------------|----------------|----------------|
-
+* Output a layer with newly added columns regarding caluclation and results
 
 # Video tutorial (adding script to ArcGIS Pro and launching)
 https://github.com/terezapohankova/edge_density/assets/60270092/e3808940-7119-4d95-9a1b-3ff700203f9d

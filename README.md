@@ -1,6 +1,6 @@
-# Edge Density (ED) for ArcGIS Pro
+# Edge Density (ED) and Shanon Diversity Index (SDI) for ArcGIS Pro
 
-This repository contains a Python script for calculating Edge Density based on the Fragstats metrics (https://fragstats.org/index.php/fragstats-metrics/patch-based-metrics/area-and-edge-metrics/l4-edge-density).
+This repository contains a Python script for calculating Edge Density and Shanon Diversity Index based on the Fragstats metrics (https://fragstats.org/index.php/fragstats-metrics/patch-based-metrics/area-and-edge-metrics/l4-edge-density and https://fragstats.org/index.php/fragstats-metrics/patch-based-metrics/diversity-metrics/l4-shannons-diversity-index).
 
 
 # Requirements

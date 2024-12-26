@@ -3,20 +3,22 @@
 import arcpy
 import math
 import sys
+import os
 
 
 class Toolbox(object):
     def __init__(self):
         """Define the toolbox (the name of the toolbox is the name of the
         .pyt file)."""
-        self.label = "Edge Density"
-        self.alias = "ED"
+        self.label = "Edge Density & Shanon Diversity Index"
+        self.alias = "ED&SDI"
 
+        
         # List of tool classes associated with this toolbox
-        self.tools = [Tool]
+        self.tools = [Tool1, Tool2]
 
 
-class Tool(object):
+class Tool1(object):
     def __init__(self):
         """Define the tool (tool name is the name of the class)."""
         self.label = "Edge Density"
@@ -64,18 +66,18 @@ class Tool(object):
             direction="Input")
         
         # Name of output Table 
-        param4 = arcpy.Parameter(
+        """param4 = arcpy.Parameter(
             displayName="Path to Output Table Name",
             name="output_table",
             datatype="GPString",
             parameterType="Required",
-            direction="Output")
+            direction="Output")"""
         
         
         param1.parameterDependencies = [param0.name]
         param1.schema.clone = True
         
-        params = [param0, param1, param2, param3, param4]
+        params = [param0, param1, param2, param3]
         
         return params
 
@@ -104,7 +106,7 @@ class Tool(object):
         GRID_ID = parameters[2].valueAsText
         GRID_SIDES = parameters[3].valueAsText
         
-        OUTPUT_TABLE = parameters[4].valueAsText
+        #OUTPUT_TABLE = parameters[4].valueAsText
         
         # Define new field names
         LAND_LENGTH_FIELD_NAME = "L_LAND"  # perimeter of landpatch (all sides)
@@ -159,6 +161,8 @@ class Tool(object):
         
         # get length of shared border between the patches
         polygon_neighb =  r"in_memory/polygon_neib"
+
+        
         arcpy.analysis.PolygonNeighbors(
             OUTPUT_LAYER,
             polygon_neighb,
@@ -167,15 +171,31 @@ class Tool(object):
             both_sides = "NO_BOTH_SIDES",
             out_area_units = "SQUARE_METERS"
         )
+
         
+
+        arcpy.management.AlterField(
+            polygon_neighb, 
+            "src_" + GRID_ID, 
+            GRID_ID,
+            GRID_ID, 
+            )
+
+        arcpy.conversion.TableToExcel(
+         polygon_neighb,
+         "summaryy.xlsx"
+        )
+
         arcpy.management.JoinField(
             OUTPUT_LAYER,
             GRID_ID,
             polygon_neighb,
-            SHARED_BORDER_ID,
+            GRID_ID,
             [SHARED_BORDER_FIELD_NAME]
         )
-    
+
+        
+
         # calculate area of land patch and write it into column
         arcpy.management.CalculateGeometryAttributes(
             input_layer_copy,
@@ -193,6 +213,8 @@ class Tool(object):
             [[LAND_LENGTH_FIELD_NAME, "SUM"], [LAND_AREA_FIELD_NAME, "SUM"]],
             GRID_ID
         )
+
+        
             
         # Join the memory-help summary statistics back to the output layer
         # based on Grid ID
@@ -238,7 +260,7 @@ class Tool(object):
            expression_type="PYTHON"           
         )
         
-        # prepare to export table of ED
+        """# prepare to export table of ED
         # dissolve based on grid ID
         # table structure : ID Grid -> ED
         dissolve_table = r"in_memory/DISSOLVE"
@@ -254,8 +276,193 @@ class Tool(object):
         arcpy.conversion.TableToExcel(
             dissolve_table,
             f"{OUTPUT_TABLE}.xlsx"
+        ) """
+        return
+    
+class Tool2(object): 
+    def __init__(self):
+        """Define the tool (tool name is the name of the class)."""
+        self.label = "Shanon Diversity Index"
+        self.description = "Calculation of Shanon Diversity Index on https://fragstats.org/index.php/fragstats-metrics/patch-based-metrics/diversity-metrics/l4-shannons-diversity-index"
+        self.canRunInBackground = False
+
+    def getParameterInfo(self):
+        """Define parameter definitions"""
+       
+       
+        # Input SHP layer with intersected grid and land patches
+        param0 = arcpy.Parameter(
+            displayName="Input Layer",
+            name="input_layer",
+            datatype=["DEShapeFile","DEFeatureClass"],
+            parameterType="Required",
+            direction="Input"
+            )
+     
+        # Output SHP Layer
+        param1 = arcpy.Parameter(
+            displayName="Output Layer",
+            name="out_features",
+            datatype=["DEShapeFile","DEFeatureClass"],
+            parameterType="Required",
+            direction="Output")
+        
+    
+        # Name of field with information about gridcell ID
+        param2 = arcpy.Parameter(
+            displayName="GRID ID",
+            name="GRID_id",
+            datatype="Field",
+            parameterType="Required",
+            direction="Input")
+        
+        
+        param1.parameterDependencies = [param0.name]
+        param1.schema.clone = True
+        
+        params = [param0, param1, param2]
+        
+        return params
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        return
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""
+        return
+
+    def execute(self, parameters, messages):
+        """The source code of the tool."""
+        
+        # get text value of parameters
+        INPUT_LAYER = parameters[0].valueAsText
+        OUTPUT_LAYER = parameters[1].valueAsText
+        GRID_ID = parameters[2].valueAsText
+        
+        # Define new field names
+        SHAPE_AREA_FIELD_NAME = "AREA_M"  # shape area of one patch in sq m
+        LANDSCAPE_PROPORTION_FIELD_NAME = "pi" #proportion of landscape defined by each occurence
+        LN_MULTIPLY_PROPORTION = "pilnpi"
+        SHANON_INDEX = "SDI" 
+        # Define datype for fields
+        FIELD_TYPE = "FLOAT"
+    
+        # Create copy of input layer to preserve original data
+        input_layer_copy = arcpy.Copy_management(
+            INPUT_LAYER, 
+            OUTPUT_LAYER)
+        
+        # add field for calculation for perimeter of the land patch    
+        arcpy.management.AddField(
+            input_layer_copy, 
+            SHAPE_AREA_FIELD_NAME, 
+            FIELD_TYPE)
+        
+        # add field for proportion of landscaoe by class 
+        arcpy.management.AddField(
+            input_layer_copy, 
+            LANDSCAPE_PROPORTION_FIELD_NAME, 
+            FIELD_TYPE)
+        
+        # add field for proportion of landscaoe by class 
+        arcpy.management.AddField(
+            input_layer_copy, 
+            LN_MULTIPLY_PROPORTION, 
+            FIELD_TYPE)
+        
+        # add field for proportion of landscaoe by class 
+        arcpy.management.AddField(
+            input_layer_copy, 
+            SHANON_INDEX, 
+            FIELD_TYPE)
+        
+        # calculate area of land patch and write it into column
+        arcpy.management.CalculateGeometryAttributes(
+            input_layer_copy,
+            [[SHAPE_AREA_FIELD_NAME, "AREA"]],
+            length_unit = "METERS",
+            area_unit = "SQUARE_METERS"
         )
         
+      # sum patch perimeter and patch area for each ID
+        # write it into separate table and store in memory
+        summary_table = r"in_memory/summary_table"
+        arcpy.analysis.Statistics(
+            OUTPUT_LAYER,
+            summary_table,
+            [[SHAPE_AREA_FIELD_NAME, "SUM"]],
+            GRID_ID
+        )
+            
+        # Join the memory-help summary statistics back to the output layer
+        # based on Grid ID
+        arcpy.management.JoinField(
+            OUTPUT_LAYER,
+            GRID_ID,
+            summary_table,
+            GRID_ID,
+            [f"SUM_{SHAPE_AREA_FIELD_NAME}"],
+        )
+        
+        arcpy.conversion.TableToExcel(
+         summary_table,
+         "summary.xlsx"
+        )
+        
+        # calculate pi - a proportion of landscape class by dividing the are of each row by sum of all areas of id
+        # id 173_a -> 5698
+        # id 173_b -> 2569
+        # id 173_c -> 2585
+        # id 173 = sum(173_a + 173_b + 173_c)
+        arcpy.management.CalculateField(
+            OUTPUT_LAYER,
+            LANDSCAPE_PROPORTION_FIELD_NAME,
+            expression =   "!{}! / !{}!".format(SHAPE_AREA_FIELD_NAME ,f"SUM_{SHAPE_AREA_FIELD_NAME}"),
+            expression_type = "PYTHON"        
+        )
+        
+        arcpy.management.CalculateField(
+            OUTPUT_LAYER,
+            LN_MULTIPLY_PROPORTION,
+            expression =   "!{}! * math.log(!{}!)".format(LANDSCAPE_PROPORTION_FIELD_NAME, LANDSCAPE_PROPORTION_FIELD_NAME),
+            expression_type = "PYTHON"        
+        )
+        
+         # sum patch perimeter and patch area for each ID
+        # write it into separate table and store in memory
+        summary_table_2 = r"in_memory/summary_table_2"
+        arcpy.analysis.Statistics(
+            OUTPUT_LAYER,
+            summary_table_2,
+            [[LN_MULTIPLY_PROPORTION, "SUM"]],
+            GRID_ID
+        )
+        
+        # Join the memory-help summary statistics back to the output layer
+        # based on Grid ID
+        arcpy.management.JoinField(
+            OUTPUT_LAYER,
+            GRID_ID,
+            summary_table_2,
+            GRID_ID,
+            [f"SUM_{LN_MULTIPLY_PROPORTION}"],
+        )
+        
+        
+        arcpy.management.CalculateField(
+            OUTPUT_LAYER,
+            SHANON_INDEX,
+            expression =   "!{}! * (-1)".format(f"SUM_{LN_MULTIPLY_PROPORTION}") ,
+            expression_type = "PYTHON"        
+        )       
         return
 
 

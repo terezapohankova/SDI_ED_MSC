@@ -9,12 +9,15 @@
 *.sbn
 *.tbx
 *.prj
+*.sbx
 
 # Other common files
 *.txt
 *.atx
 *.lock
 *.arx
+*.zip
+
 
 # Excel files
 *.xlsx

@@ -10,12 +10,12 @@ class Toolbox(object):
     def __init__(self):
         """Define the toolbox (the name of the toolbox is the name of the
         .pyt file)."""
-        self.label = "Edge Density & Shanon Diversity Index"
-        self.alias = "ED&SDI"
+        self.label = "Edge Density & Shanon Diversity Index & Mean Complixity Index"
+        self.alias = "ED_SDI_MSC"
 
         
         # List of tool classes associated with this toolbox
-        self.tools = [Tool1, Tool2]
+        self.tools = [Tool1, Tool2, Tool3]
 
 
 class Tool1(object):
@@ -259,6 +259,12 @@ class Tool1(object):
            expression=f"(!SUM_{LAND_LENGTH_FIELD_NAME}! - !{GRID_LENGTH_FIELD_NAME}! -!{SHARED_BORDER_FIELD_NAME}!) / !{GRID_AREA_FIELD_NAME}!",
            expression_type="PYTHON"           
         )
+
+        arcpy.management.DeleteField(
+            OUTPUT_LAYER, 
+            [LAND_LENGTH_FIELD_NAME, LAND_AREA_FIELD_NAME, GRID_AREA_FIELD_NAME, 
+             GRID_LENGTH_FIELD_NAME, f"SUM_{LAND_AREA_FIELD_NAME}", f"SUM_{LAND_LENGTH_FIELD_NAME}", SHARED_BORDER_FIELD_NAME], 
+            "DELETE_FIELDS")
         
         """# prepare to export table of ED
         # dissolve based on grid ID
@@ -462,7 +468,151 @@ class Tool2(object):
             SHANON_INDEX,
             expression =   "!{}! * (-1)".format(f"SUM_{LN_MULTIPLY_PROPORTION}") ,
             expression_type = "PYTHON"        
-        )       
+        )
+
+
+        arcpy.management.DeleteField(
+            OUTPUT_LAYER, 
+            [SHAPE_AREA_FIELD_NAME, LANDSCAPE_PROPORTION_FIELD_NAME, LN_MULTIPLY_PROPORTION, 
+             f"SUM_{LN_MULTIPLY_PROPORTION}", f"SUM_{SHAPE_AREA_FIELD_NAME}"], 
+            "DELETE_FIELDS")
+
+
         return
 
+class Tool3(object):
+    def __init__(self):
+        """Define the tool (tool name is the name of the class)."""
+        self.label = "Mean Shape Complexity"
+        self.description = ""
+        self.canRunInBackground = False
 
+    def getParameterInfo(self):
+        """Define parameter definitions"""
+       
+       
+        # Input SHP layer with intersected grid and land patches
+        param0 = arcpy.Parameter(
+            displayName="Input Layer",
+            name="input_layer",
+            datatype=["DEShapeFile","DEFeatureClass"],
+            parameterType="Required",
+            direction="Input"
+            )
+        
+     
+        # Output SHP Layer
+        param1 = arcpy.Parameter(
+            displayName="Output Layer",
+            name="out_features",
+            datatype=["DEShapeFile","DEFeatureClass"],
+            parameterType="Required",
+            direction="Output")
+        
+    
+        # Name of field with information about gridcell ID
+        param2 = arcpy.Parameter(
+            displayName="GRID ID",
+            name="GRID_id",
+            datatype="Field",
+            parameterType="Required",
+            direction="Input")
+    
+        
+        """# Name of output Table 
+        param4 = arcpy.Parameter(
+            displayName="Path to Output Table Name",
+            name="output_table",
+            datatype="GPString",
+            parameterType="Required",
+            direction="Output")"""
+        
+        
+        param1.parameterDependencies = [param0.name]
+        param1.schema.clone = True
+        
+        #params = [param0, param1, param2, param3]
+        params = [param0, param1, param2]
+        
+        return params
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        return
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""
+        return
+
+    def execute(self, parameters, messages):
+        """The source code of the tool."""
+        
+        # get text value of parameters
+        INPUT_LAYER = parameters[0].valueAsText
+        OUTPUT_LAYER = parameters[1].valueAsText
+        GRID_ID = parameters[2].valueAsText
+        #OUTPUT_TABLE = parameters[3].valueAsText
+        
+        AREA_FIELD_NAME = "AREA"
+        PERIM_FIELD_NAME = "PERIM" # perimeter of gridcell (all sides)
+        
+        MSC_FIELD_NAME = "MSC"
+
+        # Define datype for fields
+        FIELD_TYPE = "DOUBLE"
+      
+        # Create copy of input layer to preserve original data
+        input_layer_copy = arcpy.Copy_management(
+            INPUT_LAYER, 
+            OUTPUT_LAYER)
+        
+
+        # calculate area of land patch and write it into column
+        arcpy.management.CalculateGeometryAttributes(
+            input_layer_copy,
+            [[PERIM_FIELD_NAME, "PERIMETER_LENGTH"], [AREA_FIELD_NAME, "AREA"]],
+            length_unit = "METERS",
+            area_unit = "SQUARE_METERS"
+
+        )
+
+        # sum patch perimeter and patch area for each ID
+        # write it into separate table and store in memory
+        summary_table = r"in_memory/summary_table"
+        arcpy.analysis.Statistics(
+            OUTPUT_LAYER,
+            summary_table,
+            [[PERIM_FIELD_NAME, "SUM"], [AREA_FIELD_NAME, "SUM"]],
+            GRID_ID
+        )
+
+        arcpy.management.CalculateField(
+            OUTPUT_LAYER,
+            MSC_FIELD_NAME,
+            expression="round((!{}! / (2 * math.sqrt(math.pi * !{}!))), 3)".format(PERIM_FIELD_NAME, AREA_FIELD_NAME),
+            expression_type="PYTHON"
+        )
+       
+        arcpy.management.DeleteField(
+            OUTPUT_LAYER, 
+            [PERIM_FIELD_NAME, AREA_FIELD_NAME], 
+            "DELETE_FIELDS")
+        
+        """arcpy.management.MakeTableView(
+            OUTPUT_LAYER, 
+            OUTPUT_TABLE, 
+            )
+        
+        arcpy.conversion.TableToExcel(
+            OUTPUT_TABLE,
+            f"{OUTPUT_TABLE}.xlsx
+        )"""
+
+        return

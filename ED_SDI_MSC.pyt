@@ -484,7 +484,7 @@ class Tool3(object):
     def __init__(self):
         """Define the tool (tool name is the name of the class)."""
         self.label = "Mean Shape Complexity"
-        self.description = ""
+        self.description = "Based on https://info.undp.org/docs/pdc/Documents/ECU/MetricasFragstats-English.pdf (C19)"
         self.canRunInBackground = False
 
     def getParameterInfo(self):

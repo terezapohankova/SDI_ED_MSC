@@ -11,7 +11,7 @@ class Toolbox(object):
         """Define the toolbox (the name of the toolbox is the name of the
         .pyt file)."""
         self.label = "Edge Density & Shanon Diversity Index & Mean Complixity Index"
-        self.alias = "ED_SDI_MSC"
+        self.alias = "ED_SDI_MSC_MOVING_WINDOW"
 
         
         # List of tool classes associated with this toolbox
@@ -132,36 +132,7 @@ class ED(object):
         input_layer_copy = arcpy.Copy_management(
             INPUT_LAYER, 
             OUTPUT_LAYER)
-        
-        # add field for calculation for perimeter of the land patch    
-        arcpy.management.AddField(
-            input_layer_copy, 
-            LAND_LENGTH_FIELD_NAME, 
-            FIELD_TYPE)
-        
-        # add field for calculation for gridcell area
-        arcpy.management.AddField(
-            input_layer_copy, 
-            GRID_AREA_FIELD_NAME, 
-            FIELD_TYPE)
-        
-        # add field for calculation for land patch area
-        arcpy.management.AddField(
-            input_layer_copy, 
-            LAND_AREA_FIELD_NAME, 
-            FIELD_TYPE)
-        
-        # add field for calculation of edge density
-        arcpy.management.AddField(
-            input_layer_copy, 
-            ED_FIELD_NAME, 
-            FIELD_TYPE)
-        
-        # add field for calculation gridcell length
-        arcpy.management.AddField(
-            input_layer_copy, 
-            GRID_LENGTH_FIELD_NAME, 
-            FIELD_TYPE)
+    
         
         # get length of shared border between the patches
         polygon_neighb =  r"in_memory/polygon_neib"
@@ -177,7 +148,6 @@ class ED(object):
         )
 
         
-
         arcpy.management.AlterField(
             polygon_neighb, 
             "src_" + GRID_ID, 
@@ -243,7 +213,8 @@ class ED(object):
            OUTPUT_LAYER,
            GRID_AREA_FIELD_NAME,
            expression=f"!SUM_{LAND_AREA_FIELD_NAME}!",
-           expression_type="PYTHON"           
+           expression_type="PYTHON",
+           field_type=FIELD_TYPE           
         )
         
         # calclaute perimeter of gridcell
@@ -253,7 +224,8 @@ class ED(object):
             OUTPUT_LAYER,
             GRID_LENGTH_FIELD_NAME,
             expression =   "math.sqrt(!{}!) * {}".format(f"SUM_{LAND_AREA_FIELD_NAME}", GRID_SIDES),
-            expression_type = "PYTHON"        
+            expression_type = "PYTHON",
+            field_type=FIELD_TYPE       
         )
 
         
@@ -269,7 +241,8 @@ class ED(object):
            OUTPUT_LAYER,
            ED_FIELD_NAME,
            expression=f"(!SUM_{LAND_LENGTH_FIELD_NAME}! - !{GRID_LENGTH_FIELD_NAME}! -!{SHARED_BORDER_FIELD_NAME}!) / !{GRID_AREA_FIELD_NAME}!",
-           expression_type="PYTHON"           
+           expression_type="PYTHON",
+           field_type=FIELD_TYPE           
         )
 
         arcpy.management.DeleteField(
@@ -277,26 +250,7 @@ class ED(object):
             [LAND_LENGTH_FIELD_NAME, LAND_AREA_FIELD_NAME, GRID_AREA_FIELD_NAME, 
              GRID_LENGTH_FIELD_NAME, f"SUM_{LAND_AREA_FIELD_NAME}", f"SUM_{LAND_LENGTH_FIELD_NAME}", SHARED_BORDER_FIELD_NAME], 
             "DELETE_FIELDS")  
-
-
         
-        """# prepare to export table of ED
-        # dissolve based on grid ID
-        # table structure : ID Grid -> ED
-        dissolve_table = r"in_memory/DISSOLVE"
-        arcpy.management.Dissolve(
-            OUTPUT_LAYER,
-            dissolve_table,
-            GRID_ID,
-            [[ED_FIELD_NAME, "FIRST"]]
-        )
-        
-        # export table in excel with the name from user parameter
-        
-        arcpy.conversion.TableToExcel(
-            dissolve_table,
-            f"{OUTPUT_TABLE}.xlsx"
-        ) """
         return
     
 class SDI(object): 
@@ -310,40 +264,14 @@ class SDI(object):
         """Define parameter definitions"""
        
        
-        # Input SHP layer with intersected grid and land patches
-        param0 = arcpy.Parameter(
-            displayName="Input Layer",
-            name="input_layer",
-            datatype=["DEShapeFile","GPFeatureLayer"],
-            parameterType="Required",
-            direction="Input"
-            )
-     
-        # Output SHP Layer
-        param1 = arcpy.Parameter(
-            displayName="Output Layer",
-            name="out_features",
-            datatype=["DEShapeFile","GPFeatureLayer"],
-            parameterType="Required",
-            direction="Output")
-        
-    
-        # Name of field with information about gridcell ID
-        param2 = arcpy.Parameter(
-            displayName="GRID ID",
-            name="GRID_id",
-            datatype="Field",
-            parameterType="Required",
-            direction="Input")
+        # Get the parameter definitions with custom data types for this class
+        return get_parameter_info(
+            input_datatype=["DEShapeFile","GPFeatureLayer"],  # Input is a Feature Layer
+            output_datatype=["GPFeatureLayer", "DEShapeFile"],  # Output is a Feature Layer
+            column_datatype="Field"  # Column is a field
+        )    
         
         
-        param1.parameterDependencies = [param0.name]
-        param1.schema.clone = True
-        
-        params = [param0, param1, param2]
-        
-        return params
-
     def isLicensed(self):
         """Set whether tool is licensed to execute."""
         return True
@@ -379,30 +307,6 @@ class SDI(object):
         input_layer_copy = arcpy.Copy_management(
             INPUT_LAYER, 
             OUTPUT_LAYER)
-        
-        # add field for calculation for perimeter of the land patch    
-        arcpy.management.AddField(
-            input_layer_copy, 
-            SHAPE_AREA_FIELD_NAME, 
-            FIELD_TYPE)
-        
-        # add field for proportion of landscaoe by class 
-        arcpy.management.AddField(
-            input_layer_copy, 
-            LANDSCAPE_PROPORTION_FIELD_NAME, 
-            FIELD_TYPE)
-        
-        # add field for proportion of landscaoe by class 
-        arcpy.management.AddField(
-            input_layer_copy, 
-            LN_MULTIPLY_PROPORTION, 
-            FIELD_TYPE)
-        
-        # add field for proportion of landscaoe by class 
-        arcpy.management.AddField(
-            input_layer_copy, 
-            SHANON_INDEX, 
-            FIELD_TYPE)
         
         # calculate area of land patch and write it into column
         arcpy.management.CalculateGeometryAttributes(
@@ -446,14 +350,16 @@ class SDI(object):
             OUTPUT_LAYER,
             LANDSCAPE_PROPORTION_FIELD_NAME,
             expression =   "!{}! / !{}!".format(SHAPE_AREA_FIELD_NAME ,f"SUM_{SHAPE_AREA_FIELD_NAME}"),
-            expression_type = "PYTHON"        
+            expression_type = "PYTHON",
+            field_type=FIELD_TYPE        
         )
         
         arcpy.management.CalculateField(
             OUTPUT_LAYER,
             LN_MULTIPLY_PROPORTION,
             expression =   "!{}! * math.log(!{}!)".format(LANDSCAPE_PROPORTION_FIELD_NAME, LANDSCAPE_PROPORTION_FIELD_NAME),
-            expression_type = "PYTHON"        
+            expression_type = "PYTHON",
+            field_type=FIELD_TYPE        
         )
         
          # sum patch perimeter and patch area for each ID
@@ -505,54 +411,13 @@ class MSC(object):
         """Define parameter definitions"""
        
        
-        # Input SHP layer with intersected grid and land patches
-        param0 = arcpy.Parameter(
-            displayName="Input Layer",
-            name="input_layer",
-            datatype=["DEShapeFile","GPFeatureLayer"],
-            parameterType="Required",
-            direction="Input"
-            )
+        # Get the parameter definitions with custom data types for this class
+        return get_parameter_info(
+            input_datatype=["DEShapeFile","GPFeatureLayer"],  # Input is a Feature Layer
+            output_datatype=["GPFeatureLayer", "DEShapeFile"],  # Output is a Feature Layer
+            column_datatype="Field"  # Column is a field
+        )    
         
-     
-        # Output SHP Layer
-        param1 = arcpy.Parameter(
-            displayName="Output Layer",
-            name="out_features",
-            datatype=["DEShapeFile","GPFeatureLayer"],
-            parameterType="Required",
-            direction="Output")
-        
-    
-        # Name of field with information about gridcell ID
-        param2 = arcpy.Parameter(
-            displayName="GRID ID",
-            name="GRID_id",
-            datatype="Field",
-            parameterType="Required",
-            direction="Input")
-    
-        
-        """# Name of output Table 
-        param4 = arcpy.Parameter(
-            displayName="Path to Output Table Name",
-            name="output_table",
-            datatype="GPString",
-            parameterType="Required",
-            direction="Output")"""
-        
-        
-        param1.parameterDependencies = [param0.name]
-        param1.schema.clone = True
-        
-        #params = [param0, param1, param2, param3]
-        params = [param0, param1, param2]
-
-        # Set a filter to accept only valid field types for the 'column' parameter
-        params[2].filter.list = ['Short', 'Long', 'Float', 'Double']  # Field data types
-        params[2].parameterDependencies = [params[0].name]  # Column depends on input layer
-        
-        return params
 
     def isLicensed(self):
         """Set whether tool is licensed to execute."""
@@ -615,7 +480,8 @@ class MSC(object):
             OUTPUT_LAYER,
             MSC_FIELD_NAME,
             expression="round((!{}! / (2 * math.sqrt(math.pi * !{}!))), 3)".format(PERIM_FIELD_NAME, AREA_FIELD_NAME),
-            expression_type="PYTHON"
+            expression_type="PYTHON",
+            field_type=FIELD_TYPE
         )
        
         arcpy.management.DeleteField(

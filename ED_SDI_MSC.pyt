@@ -11,7 +11,7 @@ class Toolbox(object):
         """Define the toolbox (the name of the toolbox is the name of the
         .pyt file)."""
         self.label = "Edge Density & Shanon Diversity Index & Mean Complixity Index"
-        self.alias = "ED_SDI_MSC_"
+        self.alias = "ED_SDI_MSC"
 
         
         # List of tool classes associated with this toolbox

@@ -15,10 +15,59 @@ class Toolbox(object):
 
         
         # List of tool classes associated with this toolbox
-        self.tools = [Tool1, Tool2, Tool3]
+        self.tools = [ED, SDI, MSC]
 
+def get_parameter_info(input_datatype, output_datatype, column_datatype):
+    """Shared function for getting parameter definitions with customizable data types."""
+    # Define the first parameter (input layer or table)
+    param0 = arcpy.Parameter(
+        displayName="Input Layer",  # Label for the input parameter
+        name="input_layer",  # Name of the input parameter
+        datatype=input_datatype,  # Data type for input (customizable for each class)
+        parameterType="Required",  # This parameter is required
+        direction="Input"  # Direction of data flow (input)
+    )
+    
+    # Define the second parameter (output layer or table)
+    param1 = arcpy.Parameter(
+        displayName="Output Layer (FeatureClass or Shapefile)",  # Label for the output parameter
+        name="out_features",  # Name of the output parameter
+        datatype=output_datatype,  # Data type for output (customizable for each class)
+        parameterType="Required",  # This parameter is required
+        direction="Output"  # Direction of data flow (output)
+    )
 
-class Tool1(object):
+    # Define the third parameter (column to be normalized)
+    param2 = arcpy.Parameter(
+        displayName="Column ID",  # Label for the column parameter
+        name="column",  # Name of the column parameter
+        datatype=column_datatype,  # Data type for the column (customizable for each class)
+        parameterType="Required",  # This parameter is required
+        direction="Input"  # Direction of data flow (input)
+    )
+
+    # Number of sides of grid (square -> 4, octagon ->8")
+    param3 = arcpy.Parameter(
+        displayName="Number of Grid Sides (4, 8 etc.)",
+        name="grid_sides",
+        datatype="GPLong",
+        parameterType="Required",
+        direction="Input")
+
+    # Set parameter dependencies (output depends on input)
+    param1.parameterDependencies = [param0.name]
+    param1.schema.clone = True  # Cloning schema to ensure output matches input format
+
+    # Combine the parameters into a list
+    params = [param0, param1, param2, param3]
+    
+    # Set a filter to accept only valid field types for the 'column' parameter
+    params[2].filter.list = ['Short', 'Long', 'Float', 'Double']  # Field data types
+    params[2].parameterDependencies = [params[0].name]  # Column depends on input layer
+
+    return params  # Return the list of parameters
+
+class ED(object):
     def __init__(self):
         """Define the tool (tool name is the name of the class)."""
         self.label = "Edge Density"
@@ -28,58 +77,13 @@ class Tool1(object):
     def getParameterInfo(self):
         """Define parameter definitions"""
        
-       
-        # Input SHP layer with intersected grid and land patches
-        param0 = arcpy.Parameter(
-            displayName="Input Layer",
-            name="input_layer",
-            datatype=["DEShapeFile","DEFeatureClass"],
-            parameterType="Required",
-            direction="Input"
-            )
+       # Get the parameter definitions with custom data types for this class
+        return get_parameter_info(
+            input_datatype=["DEShapeFile","GPFeatureLayer"],  # Input is a Feature Layer
+            output_datatype=["GPFeatureLayer", "DEShapeFile"],  # Output is a Feature Layer
+            column_datatype="Field"  # Column is a field
+        )     
         
-     
-        # Output SHP Layer
-        param1 = arcpy.Parameter(
-            displayName="Output Layer",
-            name="out_features",
-            datatype=["DEShapeFile","DEFeatureClass"],
-            parameterType="Required",
-            direction="Output")
-        
-    
-        # Name of field with information about gridcell ID
-        param2 = arcpy.Parameter(
-            displayName="GRID ID",
-            name="GRID_id",
-            datatype="Field",
-            parameterType="Required",
-            direction="Input")
-        
-
-        # Number of sides of grid (square -> 4, octagon ->8")
-        param3 = arcpy.Parameter(
-            displayName="Number of Grid Sides (4, 8 etc.)",
-            name="grid_sides",
-            datatype="GPLong",
-            parameterType="Required",
-            direction="Input")
-        
-        # Name of output Table 
-        """param4 = arcpy.Parameter(
-            displayName="Path to Output Table Name",
-            name="output_table",
-            datatype="GPString",
-            parameterType="Required",
-            direction="Output")"""
-        
-        
-        param1.parameterDependencies = [param0.name]
-        param1.schema.clone = True
-        
-        params = [param0, param1, param2, param3]
-        
-        return params
 
     def isLicensed(self):
         """Set whether tool is licensed to execute."""
@@ -194,6 +198,12 @@ class Tool1(object):
             [SHARED_BORDER_FIELD_NAME]
         )
 
+        with arcpy.da.UpdateCursor(OUTPUT_LAYER, SHARED_BORDER_FIELD_NAME) as cursor:
+            for row in cursor:
+                if (row[0] == None):
+                    row[0] = 0
+                cursor.updateRow(row)
+
         
 
         # calculate area of land patch and write it into column
@@ -245,6 +255,8 @@ class Tool1(object):
             expression =   "math.sqrt(!{}!) * {}".format(f"SUM_{LAND_AREA_FIELD_NAME}", GRID_SIDES),
             expression_type = "PYTHON"        
         )
+
+        
         
         # calulate EDGE INDEX
         # (total length of land patches - perimeter of grid cell) / grid area  
@@ -264,7 +276,9 @@ class Tool1(object):
             OUTPUT_LAYER, 
             [LAND_LENGTH_FIELD_NAME, LAND_AREA_FIELD_NAME, GRID_AREA_FIELD_NAME, 
              GRID_LENGTH_FIELD_NAME, f"SUM_{LAND_AREA_FIELD_NAME}", f"SUM_{LAND_LENGTH_FIELD_NAME}", SHARED_BORDER_FIELD_NAME], 
-            "DELETE_FIELDS")
+            "DELETE_FIELDS")  
+
+
         
         """# prepare to export table of ED
         # dissolve based on grid ID
@@ -285,7 +299,7 @@ class Tool1(object):
         ) """
         return
     
-class Tool2(object): 
+class SDI(object): 
     def __init__(self):
         """Define the tool (tool name is the name of the class)."""
         self.label = "Shanon Diversity Index"
@@ -300,7 +314,7 @@ class Tool2(object):
         param0 = arcpy.Parameter(
             displayName="Input Layer",
             name="input_layer",
-            datatype=["DEShapeFile","DEFeatureClass"],
+            datatype=["DEShapeFile","GPFeatureLayer"],
             parameterType="Required",
             direction="Input"
             )
@@ -309,7 +323,7 @@ class Tool2(object):
         param1 = arcpy.Parameter(
             displayName="Output Layer",
             name="out_features",
-            datatype=["DEShapeFile","DEFeatureClass"],
+            datatype=["DEShapeFile","GPFeatureLayer"],
             parameterType="Required",
             direction="Output")
         
@@ -480,7 +494,7 @@ class Tool2(object):
 
         return
 
-class Tool3(object):
+class MSC(object):
     def __init__(self):
         """Define the tool (tool name is the name of the class)."""
         self.label = "Mean Shape Complexity"
@@ -495,7 +509,7 @@ class Tool3(object):
         param0 = arcpy.Parameter(
             displayName="Input Layer",
             name="input_layer",
-            datatype=["DEShapeFile","DEFeatureClass"],
+            datatype=["DEShapeFile","GPFeatureLayer"],
             parameterType="Required",
             direction="Input"
             )
@@ -505,7 +519,7 @@ class Tool3(object):
         param1 = arcpy.Parameter(
             displayName="Output Layer",
             name="out_features",
-            datatype=["DEShapeFile","DEFeatureClass"],
+            datatype=["DEShapeFile","GPFeatureLayer"],
             parameterType="Required",
             direction="Output")
         
@@ -533,6 +547,10 @@ class Tool3(object):
         
         #params = [param0, param1, param2, param3]
         params = [param0, param1, param2]
+
+        # Set a filter to accept only valid field types for the 'column' parameter
+        params[2].filter.list = ['Short', 'Long', 'Float', 'Double']  # Field data types
+        params[2].parameterDependencies = [params[0].name]  # Column depends on input layer
         
         return params
 

@@ -3,6 +3,7 @@
 import arcpy
 import math
 import sys
+import statistics
 import os
 
 
@@ -11,11 +12,11 @@ class Toolbox(object):
         """Define the toolbox (the name of the toolbox is the name of the
         .pyt file)."""
         self.label = "Edge Density & Shanon Diversity Index & Mean Complixity Index"
-        self.alias = "ED_SDI_MSC_MOVING_WINDOW"
+        self.alias = "ED_SDI_MSC"
 
         
         # List of tool classes associated with this toolbox
-        self.tools = [ED, SDI, MSC]
+        self.tools = [ED, SDI, MSC, MW]
 
 def get_parameter_info(input_datatype, output_datatype, column_datatype):
     """Shared function for getting parameter definitions with customizable data types."""
@@ -301,7 +302,7 @@ class SDI(object):
         LN_MULTIPLY_PROPORTION = "pilnpi"
         SHANON_INDEX = "SDI" 
         # Define datype for fields
-        FIELD_TYPE = "FLOAT"
+        FIELD_TYPE = "DOUBLE"
     
         # Create copy of input layer to preserve original data
         input_layer_copy = arcpy.Copy_management(
@@ -387,7 +388,8 @@ class SDI(object):
             OUTPUT_LAYER,
             SHANON_INDEX,
             expression =   "!{}! * (-1)".format(f"SUM_{LN_MULTIPLY_PROPORTION}") ,
-            expression_type = "PYTHON"        
+            expression_type = "PYTHON",
+            field_type=FIELD_TYPE         
         )
 
 
@@ -456,6 +458,10 @@ class MSC(object):
             INPUT_LAYER, 
             OUTPUT_LAYER)
         
+        arcpy.management.AddField(OUTPUT_LAYER, 
+                                  MSC_FIELD_NAME, 
+                                  "DOUBLE")
+        
 
         # calculate area of land patch and write it into column
         arcpy.management.CalculateGeometryAttributes(
@@ -476,12 +482,14 @@ class MSC(object):
             GRID_ID
         )
 
+        
+
+
         arcpy.management.CalculateField(
             OUTPUT_LAYER,
             MSC_FIELD_NAME,
             expression="round((!{}! / (2 * math.sqrt(math.pi * !{}!))), 3)".format(PERIM_FIELD_NAME, AREA_FIELD_NAME),
-            expression_type="PYTHON",
-            field_type=FIELD_TYPE
+            expression_type="PYTHON"
         )
        
         arcpy.management.DeleteField(
@@ -500,3 +508,145 @@ class MSC(object):
         )"""
 
         return
+    
+class MW:
+    def __init__(self):
+        """Define the tool (tool name is the name of the class)."""
+        self.label = "Focal Statistics on Gridded Vector"
+        self.description = "Iterates through each feature in the input layer and selects \
+        it and its adjacent features. Calculates focal statistcs on selected cells"
+
+    def getParameterInfo(self):
+        """Define the parameters for the tool."""
+        
+        # Define the first parameter (input layer or table)
+        param0 = arcpy.Parameter(
+            displayName="Input Layer",  # Label for the input parameter
+            name="input_layer",  # Name of the input parameter
+            datatype=["GPFeatureLayer", "DEShapeFile"],  # Data type for input (customizable for each class)
+            parameterType="Required",  # This parameter is required
+            direction="Input"  # Direction of data flow (input)
+        )
+
+        # Define the second parameter (output layer)
+        param1 = arcpy.Parameter(
+            displayName="Output Layer",  # Label for the input parameter
+            name="output_layer",  # Name of the input parameter
+            datatype=["GPFeatureLayer", "DEShapeFile"],  # Data type for input (customizable for each class)
+            parameterType="Required",  # This parameter is required
+            direction="Output"  # Direction of data flow (output)
+        )
+
+        # Define the third parameter (column to be normalized)
+        param2 = arcpy.Parameter(
+            displayName="Focal Statistics Column",  # Label for the column parameter
+            name="column_id",  # Name of the column parameter
+            datatype="Field",  # Data type for the column (customizable for each class)
+            parameterType="Required",  # This parameter is required
+            direction="Input"  # Direction of data flow (input)
+        )
+
+        # Define the fourth parameter (statistics type)
+        param3 = arcpy.Parameter(
+            displayName="Focal Statistics Type",  # Label for the statistics type parameter
+            name="statistics_type",  # Name of the statistics type parameter
+            datatype="GPString",  # Data type for the statistics type
+            parameterType="Required",  # This parameter is required
+            direction="Input"  # Direction of data flow (input)
+        )
+        # Provide a list of statistics options (Mean, Median, Sum, etc.)
+        param3.filter.type = "ValueList"
+        param3.filter.list = ["MEAN", "MEDIAN", "SUM"]
+
+        # Combine the parameters into a list
+        params = [param0, param1, param2, param3]
+
+        # Set parameter dependencies (output depends on input)
+        param1.parameterDependencies = [param0.name]
+        param1.schema.clone = True  # Cloning schema to ensure output matches input format
+
+        # Set a filter to accept only valid field types for the 'column' parameter
+        params[2].filter.list = ['Short', 'Long', 'Float', 'Double', 'ObjectID']  # Field data types
+        params[2].parameterDependencies = [params[0].name]  # Column depends on input layer
+
+        return params
+
+    def isLicensed(self):
+        """Set whether the tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        return
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter. This method is called after internal validation."""  
+        return
+
+ 
+    def execute(self, parameters, messages):
+        """The source code of the tool."""
+
+        # Get input parameters
+        input_layer = parameters[0].valueAsText  # Input feature layer
+        output_layer = parameters[1].valueAsText  # Output feature layer (copy)
+        column_id = parameters[2].valueAsText    # Field to calculate mean on
+
+        # Get workspace path and feature class name
+        workspace = arcpy.env.workspace if arcpy.env.workspace else os.path.dirname(output_layer)
+        output_name = os.path.basename(output_layer)
+
+        # Check if output already exists, delete if necessary
+        if arcpy.Exists(output_layer):
+            arcpy.management.Delete(output_layer)
+            arcpy.AddMessage(f"Deleted existing output layer: {output_layer}")
+
+        # Copy input schema to create output layer
+        arcpy.management.CopyFeatures(input_layer, output_layer)
+        arcpy.AddMessage(f"Copied schema from {input_layer} to {output_layer}")
+
+        # Add a new field for the mean values
+        mean_field = "FocalStatistics"
+        arcpy.management.AddField(output_layer, mean_field, "DOUBLE")
+        arcpy.AddMessage(f"Added field '{mean_field}' to store computed mean values.")
+
+        # Loop through each feature based on OBJECTID
+        with arcpy.da.UpdateCursor(output_layer, ["OBJECTID", column_id, "SHAPE@", mean_field]) as update_cursor:
+            for row in update_cursor:
+                objectid = row[0]  # Current feature's OBJECTID
+                geometry = row[2]  # Geometry of the selected feature
+                
+                # Select the current cell
+                where_clause = f"OBJECTID = {objectid}"
+                arcpy.SelectLayerByAttribute_management(input_layer, "NEW_SELECTION", where_clause)
+                
+                # Select its 8 neighboring cells (adjacent)
+                arcpy.SelectLayerByLocation_management(
+                    input_layer, "INTERSECT", geometry, selection_type="ADD_TO_SELECTION"
+                )
+
+                # Collect values of the selected feature and its neighbors
+                values = []
+                with arcpy.da.SearchCursor(input_layer, [column_id]) as search_cursor:
+                    for neighbor in search_cursor:
+                        values.append(neighbor[0])
+
+                # Compute mean from the 9 selected cells (center + 8 neighbors)
+                if values:
+                    mean_value = statistics.mean(values)
+                    arcpy.AddMessage(f"OBJECTID {objectid}: Mean of 9-cell neighborhood = {mean_value}")
+
+                    # Write the mean back to the original center cell (not neighbors)
+                    row[3] = mean_value  # Update MeanValue field
+                    update_cursor.updateRow(row)  # Save the update
+                
+                # Clear selection before the next iteration
+                arcpy.SelectLayerByAttribute_management(input_layer, "CLEAR_SELECTION")
+
+        arcpy.AddMessage(f"Processing completed. Mean values stored in '{output_layer}'")
+
+
+

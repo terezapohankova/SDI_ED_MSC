@@ -539,7 +539,7 @@ class MW:
 
         # Define the third parameter (column to be normalized)
         param2 = arcpy.Parameter(
-            displayName="Focal Statistics Column",  # Label for the column parameter
+            displayName="Column with ID",  # Label for the column parameter
             name="column_id",  # Name of the column parameter
             datatype="Field",  # Data type for the column (customizable for each class)
             parameterType="Required",  # This parameter is required
@@ -554,20 +554,35 @@ class MW:
             parameterType="Required",  # This parameter is required
             direction="Input"  # Direction of data flow (input)
         )
+
+        # Define the fourth parameter (statistics type)
+        param4 = arcpy.Parameter(
+            displayName="Focal Statistics Column",  # Label for the statistics type parameter
+            name="fc_column",  # Name of the statistics type parameter
+            datatype="Field",  # Data type for the statistics type
+            parameterType="Required",  # This parameter is required
+            direction="Input"  # Direction of data flow (input)
+        )
+
+
         # Provide a list of statistics options (Mean, Median, Sum, etc.)
         param3.filter.type = "ValueList"
         param3.filter.list = ["MEAN", "MEDIAN", "SUM"]
 
         # Combine the parameters into a list
-        params = [param0, param1, param2, param3]
+        params = [param0, param1, param2, param3, param4]
 
         # Set parameter dependencies (output depends on input)
         param1.parameterDependencies = [param0.name]
         param1.schema.clone = True  # Cloning schema to ensure output matches input format
 
         # Set a filter to accept only valid field types for the 'column' parameter
-        params[2].filter.list = ['Short', 'Long', 'Float', 'Double', 'ObjectID']  # Field data types
+        params[2].filter.list = ['Short', 'Long', 'Float', 'Double']  # Field data types
         params[2].parameterDependencies = [params[0].name]  # Column depends on input layer
+
+        # Set a filter to accept only valid field types for the 'column' parameter
+        params[4].filter.list = ['Short', 'Long', 'Float', 'Double']  # Field data types
+        params[4].parameterDependencies = [params[0].name]  # Column depends on input layer
 
         return params
 
@@ -586,20 +601,17 @@ class MW:
         parameter. This method is called after internal validation."""  
         return
 
- 
     def execute(self, parameters, messages):
         """The source code of the tool."""
 
         # Get input parameters
         input_layer = parameters[0].valueAsText  # Input feature layer
         output_layer = parameters[1].valueAsText  # Output feature layer (copy)
-        column_id = parameters[2].valueAsText    # Field to calculate mean on
+        column_id = parameters[2].valueAsText  # User-defined column for unique ID
+        statistics_type = parameters[3].valueAsText  # Statistics type (MEAN, MEDIAN, SUM)
+        fc_column = parameters[4].valueAsText  # Column to calculate statistics on
 
-        # Get workspace path and feature class name
-        workspace = arcpy.env.workspace if arcpy.env.workspace else os.path.dirname(output_layer)
-        output_name = os.path.basename(output_layer)
-
-        # Check if output already exists, delete if necessary
+        # Delete existing output if necessary
         if arcpy.Exists(output_layer):
             arcpy.management.Delete(output_layer)
             arcpy.AddMessage(f"Deleted existing output layer: {output_layer}")
@@ -608,45 +620,110 @@ class MW:
         arcpy.management.CopyFeatures(input_layer, output_layer)
         arcpy.AddMessage(f"Copied schema from {input_layer} to {output_layer}")
 
-        # Add a new field for the mean values
-        mean_field = "FocalStatistics"
-        arcpy.management.AddField(output_layer, mean_field, "DOUBLE")
-        arcpy.AddMessage(f"Added field '{mean_field}' to store computed mean values.")
+        # Add a new field for computed statistics
+        stat_field = "FocStat"
+        arcpy.management.AddField(output_layer, stat_field, "DOUBLE")
+        arcpy.AddMessage(f"Added field '{stat_field}' to store computed statistics.")
 
-        # Loop through each feature based on OBJECTID
-        with arcpy.da.UpdateCursor(output_layer, ["OBJECTID", column_id, "SHAPE@", mean_field]) as update_cursor:
-            for row in update_cursor:
-                objectid = row[0]  # Current feature's OBJECTID
-                geometry = row[2]  # Geometry of the selected feature
-                
-                # Select the current cell
-                where_clause = f"OBJECTID = {objectid}"
-                arcpy.SelectLayerByAttribute_management(input_layer, "NEW_SELECTION", where_clause)
-                
-                # Select its 8 neighboring cells (adjacent)
-                arcpy.SelectLayerByLocation_management(
-                    input_layer, "INTERSECT", geometry, selection_type="ADD_TO_SELECTION"
-                )
+        # Get unique IDs from the dataset
+        unique_ids = set()
+        with arcpy.da.SearchCursor(output_layer, [column_id]) as cursor:
+            for row in cursor:
+                unique_ids.add(row[0])  # Collect unique values of `column_id`
 
-                # Collect values of the selected feature and its neighbors
-                values = []
-                with arcpy.da.SearchCursor(input_layer, [column_id]) as search_cursor:
-                    for neighbor in search_cursor:
-                        values.append(neighbor[0])
+        # Iterate over unique IDs
+        iteration = 1  
+        for unique_id in unique_ids:
+            arcpy.AddMessage(f"\n--- Iteration {iteration}: Processing ID {unique_id} ---")
 
-                # Compute mean from the 9 selected cells (center + 8 neighbors)
-                if values:
-                    mean_value = statistics.mean(values)
-                    arcpy.AddMessage(f"OBJECTID {objectid}: Mean of 9-cell neighborhood = {mean_value}")
+            # Format query based on type (numeric or string)
+            if isinstance(unique_id, (int, float)):  
+                where_clause = f"{column_id} = {unique_id}"
+            else:
+                where_clause = f"{column_id} = '{unique_id}'"
 
-                    # Write the mean back to the original center cell (not neighbors)
-                    row[3] = mean_value  # Update MeanValue field
-                    update_cursor.updateRow(row)  # Save the update
-                
-                # Clear selection before the next iteration
-                arcpy.SelectLayerByAttribute_management(input_layer, "CLEAR_SELECTION")
+            # Step 1: Select all features that share the same column_id
+            arcpy.SelectLayerByAttribute_management(input_layer, "NEW_SELECTION", where_clause)
 
-        arcpy.AddMessage(f"Processing completed. Mean values stored in '{output_layer}'")
+            # Step 2: Select first-degree neighbors
+            arcpy.SelectLayerByLocation_management(
+                input_layer, "INTERSECT", input_layer, selection_type="ADD_TO_SELECTION"
+            )
 
+            # Collect IDs from first selection
+            first_gen_ids = set()
 
+            with arcpy.da.SearchCursor(input_layer, [column_id]) as id_cursor:
+                for row in id_cursor:
+                    first_gen_ids.add(row[0])
 
+            #all_selected_ids_1 = first_gen_ids.union(second_gen_ids)
+            # Step 5: Select all features where column_id is in collected IDs
+            id_query = f"{column_id} IN ({', '.join(map(str, first_gen_ids))})"
+            arcpy.AddMessage(f"{column_id} IN ({', '.join(map(str, first_gen_ids))})")
+
+            arcpy.SelectLayerByAttribute_management(input_layer, "NEW_SELECTION", id_query)
+
+            arcpy.AddMessage(f"First-degree neighbors selected: {sorted(first_gen_ids)}")
+
+            # Step 3: Select second-degree neighbors **based on first selection**
+            arcpy.SelectLayerByLocation_management(
+                input_layer, "INTERSECT", input_layer, selection_type="ADD_TO_SELECTION"
+            )
+
+            
+            # Collect IDs from second selection
+            second_gen_ids = set()
+            with arcpy.da.SearchCursor(input_layer, [column_id]) as id_cursor:
+                for row in id_cursor:
+                    second_gen_ids.add(row[0])
+
+            # Step 4: Collect all selected IDs (first + second-gen)
+            all_selected_ids = first_gen_ids.union(second_gen_ids)
+
+            # Step 5: Select all features where column_id is in collected IDs
+            id_query = f"{column_id} IN ({', '.join(map(str, all_selected_ids))})"
+            arcpy.AddMessage(f"{column_id} IN ({', '.join(map(str, all_selected_ids))})")
+            
+            arcpy.SelectLayerByAttribute_management(input_layer, "NEW_SELECTION", id_query)
+
+            arcpy.AddMessage(f"Second-degree neighbors selected: {sorted(second_gen_ids)}")
+            
+
+            arcpy.AddMessage(f"Final selection for ID {unique_id}: {sorted(all_selected_ids)}")
+            arcpy.AddMessage(f"Total selected unique IDs: {len(all_selected_ids)}\n")
+
+            # Step 6: Collect values from the selected features
+            values = []
+            with arcpy.da.SearchCursor(input_layer, [fc_column]) as value_cursor:
+                for row in value_cursor:
+                    values.append(row[0])
+
+            # Step 7: Compute statistics
+            if values:
+                if statistics_type == "MEAN":
+                    stat_value = statistics.mean(values)
+                elif statistics_type == "MEDIAN":
+                    stat_value = statistics.median(values)
+                elif statistics_type == "SUM":
+                    stat_value = sum(values)
+                else:
+                    stat_value = None
+
+                if stat_value is not None:
+                    arcpy.AddMessage(f"Computed {statistics_type} for ID {unique_id}: {stat_value}")
+
+                    # Step 8: Update all matching rows in the output layer
+                    with arcpy.da.UpdateCursor(output_layer, [column_id, stat_field]) as update_cursor:
+                        for row in update_cursor:
+                            if row[0] in all_selected_ids:
+                                row[1] = stat_value
+                                update_cursor.updateRow(row)
+
+            # Step 9: Clear selection before the next iteration
+            arcpy.SelectLayerByAttribute_management(input_layer, "CLEAR_SELECTION")
+
+            iteration += 1  # Increment iteration counter
+
+        arcpy.AddMessage(f"Processing completed. {statistics_type} values stored in '{output_layer}'")
+        return

@@ -16,7 +16,7 @@ class Toolbox(object):
 
         
         # List of tool classes associated with this toolbox
-        self.tools = [ED, SDI, MSC, MW]
+        self.tools = [ED, SDI, MSC, MW, PREPROCESS]
 
 def get_parameter_info(input_datatype, output_datatype, column_datatype):
     """Shared function for getting parameter definitions with customizable data types."""
@@ -67,6 +67,120 @@ def get_parameter_info(input_datatype, output_datatype, column_datatype):
     params[2].parameterDependencies = [params[0].name]  # Column depends on input layer
 
     return params  # Return the list of parameters
+
+
+class PREPROCESS:
+    def __init__(self):
+        """Define the tool (tool name is the name of the class)."""
+        self.label = "Creation of Gridded Layers"
+        self.description = "Creates a united dataset between the original input layer \
+            and newly created fishnet based on user input."
+
+    def getParameterInfo(self):
+        """Define the parameters for the tool."""
+        
+        # Define the first parameter (input layer or table)
+        param0 = arcpy.Parameter(
+            displayName="Input Layer",  # Label for the input parameter
+            name="input_layer",  # Name of the input parameter
+            datatype=["GPFeatureLayer", "DEShapeFile"],  # Data type for input (customizable for each class)
+            parameterType="Required",  # This parameter is required
+            direction="Input"  # Direction of data flow (input)
+        )
+
+        # Define the second parameter (output layer)
+        param1 = arcpy.Parameter(
+            displayName="Output Layer",  # Label for the input parameter
+            name="output_layer",  # Name of the input parameter
+            datatype=["GPFeatureLayer", "DEShapeFile"],  # Data type for input (customizable for each class)
+            parameterType="Required",  # This parameter is required
+            direction="Output"  # Direction of data flow (output)
+        )
+
+        # Define the second parameter (output layer)
+        param2 = arcpy.Parameter(
+            displayName="Fishnet Cellsize (m)",  # Label for the input parameter
+            name="cellsize",  # Name of the input parameter
+            datatype='GPLong',  # Data type for input (customizable for each class)
+            parameterType="Required",  # This parameter is required
+            direction="Output"  # Direction of data flow (output)
+        )
+
+
+
+        # Combine the parameters into a list
+        params = [param0, param1, param2]
+
+        # Set parameter dependencies (output depends on input)
+        param1.parameterDependencies = [param0.name]
+        param1.schema.clone = True  # Cloning schema to ensure output matches input format
+
+        return params
+
+    def isLicensed(self):
+        """Set whether the tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        return
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter. This method is called after internal validation."""  
+        return
+
+    def execute(self, parameters, messages):
+        """The source code of the tool."""
+
+        # Get input parameters
+        input_layer = parameters[0].valueAsText  # Input feature layer
+        output_layer = parameters[1].valueAsText  # Output feature layer (copy)
+        fishnet_size = int(parameters[2].valueAsText)
+        
+        cell_size_x = fishnet_size  # Cell width
+        cell_size_y = fishnet_size  # Cell height
+
+        # Get extent and spatial reference of input feature class
+        desc = arcpy.Describe(input_layer)
+        origin_x = desc.extent.XMin
+        origin_y = desc.extent.YMin
+        opposite_x = desc.extent.XMax
+        opposite_y = desc.extent.YMax
+        spatial_ref = desc.spatialReference  # Extract spatial reference
+
+        # Calculate grid width and height
+        grid_width = opposite_x - origin_x
+        grid_height = opposite_y - origin_y
+
+        # Calculate number of rows and columns dynamically
+        num_cols = int(grid_width / cell_size_x) + 1
+        num_rows = int(grid_height / cell_size_y) + 1 
+
+        # Create fishnet
+        fishnet = arcpy.management.CreateFishnet(
+            out_feature_class=r'memory/fishnet',
+            origin_coord=f"{origin_x} {origin_y}",
+            y_axis_coord=f"{origin_x} {origin_y + 10}",  # Defines Y-axis direction
+            cell_width=cell_size_x,
+            cell_height=cell_size_y,
+            number_rows=num_rows,
+            number_columns=num_cols,
+            corner_coord=f"{opposite_x} {opposite_y}",
+            labels="NO_LABELS",
+            template="",
+            geometry_type="POLYGON"
+        )
+
+        # Set the spatial reference of the output fishnet
+        clipped = arcpy.analysis.Clip(fishnet, input_layer, r'memory/clipped_fishnet')
+        
+        arcpy.analysis.Union([clipped, input_layer], output_layer, 'ALL')
+        arcpy.DefineProjection_management(output_layer, spatial_ref)
+
+        return
 
 class ED(object):
     def __init__(self):
@@ -229,6 +343,7 @@ class ED(object):
             field_type=FIELD_TYPE       
         )
 
+
         
         
         # calulate EDGE INDEX
@@ -241,7 +356,7 @@ class ED(object):
         arcpy.management.CalculateField(
            OUTPUT_LAYER,
            ED_FIELD_NAME,
-           expression=f"(!SUM_{LAND_LENGTH_FIELD_NAME}! - !{GRID_LENGTH_FIELD_NAME}! -!{SHARED_BORDER_FIELD_NAME}!) / !{GRID_AREA_FIELD_NAME}!",
+           expression=f"max(((!SUM_{LAND_LENGTH_FIELD_NAME}! - !{GRID_LENGTH_FIELD_NAME}! -!{SHARED_BORDER_FIELD_NAME}!) / !{GRID_AREA_FIELD_NAME}!),0)",
            expression_type="PYTHON",
            field_type=FIELD_TYPE           
         )
@@ -251,7 +366,8 @@ class ED(object):
             [LAND_LENGTH_FIELD_NAME, LAND_AREA_FIELD_NAME, GRID_AREA_FIELD_NAME, 
              GRID_LENGTH_FIELD_NAME, f"SUM_{LAND_AREA_FIELD_NAME}", f"SUM_{LAND_LENGTH_FIELD_NAME}", SHARED_BORDER_FIELD_NAME], 
             "DELETE_FIELDS")  
-        
+      
+            
         return
     
 class SDI(object): 

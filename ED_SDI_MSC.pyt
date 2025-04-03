@@ -180,7 +180,28 @@ class PREPROCESS:
         arcpy.analysis.Union([clipped, input_layer], output_layer, 'ALL')
         arcpy.DefineProjection_management(output_layer, spatial_ref)
 
-        return
+       
+
+        # Get a list of fields in the feature class
+        fields = [field.name for field in arcpy.ListFields(output_layer)]
+
+
+        fishnet_field_name = f'FID_fishnet_{fishnet_size}'
+        # Check if the target field exists
+        if fishnet_field_name in fields:
+             print(f"Field '{fishnet_size}' already exists. No changes made.")
+                    
+        elif 'FID_clipped_fishnet' in fields:
+            # rename ID of newlz createf fishnet for better clarity using cell size
+            arcpy.management.AlterField(output_layer, 
+                                    'FID_clipped_fishnet', 
+                                    fishnet_field_name, # actual name
+                                    fishnet_field_name) # alias
+            return
+
+        else:
+
+            return
 
 class ED(object):
     def __init__(self):
@@ -598,9 +619,6 @@ class MSC(object):
             GRID_ID
         )
 
-        
-
-
         arcpy.management.CalculateField(
             OUTPUT_LAYER,
             MSC_FIELD_NAME,
@@ -737,7 +755,7 @@ class MW:
         arcpy.AddMessage(f"Copied schema from {input_layer} to {output_layer}")
 
         # Add a new field for computed statistics
-        stat_field = "FocStat"
+        """stat_field = "FocStat"
         arcpy.management.AddField(output_layer, stat_field, "DOUBLE")
         arcpy.AddMessage(f"Added field '{stat_field}' to store computed statistics.")
 
@@ -761,10 +779,6 @@ class MW:
             # Step 1: Select all features that share the same column_id
             arcpy.SelectLayerByAttribute_management(input_layer, "NEW_SELECTION", where_clause)
 
-            # Step 2: Select first-degree neighbors
-            arcpy.SelectLayerByLocation_management(
-                input_layer, "INTERSECT", input_layer, selection_type="ADD_TO_SELECTION"
-            )
 
             # Collect IDs from first selection
             first_gen_ids = set()
@@ -776,70 +790,129 @@ class MW:
             #all_selected_ids_1 = first_gen_ids.union(second_gen_ids)
             # Step 5: Select all features where column_id is in collected IDs
             id_query = f"{column_id} IN ({', '.join(map(str, first_gen_ids))})"
-            arcpy.AddMessage(f"{column_id} IN ({', '.join(map(str, first_gen_ids))})")
-
-            arcpy.SelectLayerByAttribute_management(input_layer, "NEW_SELECTION", id_query)
-
-            arcpy.AddMessage(f"First-degree neighbors selected: {sorted(first_gen_ids)}")
-
-            # Step 3: Select second-degree neighbors **based on first selection**
-            arcpy.SelectLayerByLocation_management(
-                input_layer, "INTERSECT", input_layer, selection_type="ADD_TO_SELECTION"
-            )
+            arcpy.AddMessage(f"{column_id} IN ({', '.join(map(str, first_gen_ids))})")"""
 
             
-            # Collect IDs from second selection
-            second_gen_ids = set()
-            with arcpy.da.SearchCursor(input_layer, [column_id]) as id_cursor:
-                for row in id_cursor:
-                    second_gen_ids.add(row[0])
-
-            # Step 4: Collect all selected IDs (first + second-gen)
-            all_selected_ids = first_gen_ids.union(second_gen_ids)
-
-            # Step 5: Select all features where column_id is in collected IDs
-            id_query = f"{column_id} IN ({', '.join(map(str, all_selected_ids))})"
-            arcpy.AddMessage(f"{column_id} IN ({', '.join(map(str, all_selected_ids))})")
-            
-            arcpy.SelectLayerByAttribute_management(input_layer, "NEW_SELECTION", id_query)
-
-            arcpy.AddMessage(f"Second-degree neighbors selected: {sorted(second_gen_ids)}")
             
 
-            arcpy.AddMessage(f"Final selection for ID {unique_id}: {sorted(all_selected_ids)}")
-            arcpy.AddMessage(f"Total selected unique IDs: {len(all_selected_ids)}\n")
+        cell_size_x = 100  # Cell width
+        cell_size_y = 100  # Cell height
 
-            # Step 6: Collect values from the selected features
-            values = []
-            with arcpy.da.SearchCursor(input_layer, [fc_column]) as value_cursor:
-                for row in value_cursor:
-                    values.append(row[0])
+        # Get extent and spatial reference of input feature class
+        desc = arcpy.Describe(input_layer)
+        origin_x = desc.extent.XMin
+        origin_y = desc.extent.YMin
+        opposite_x = desc.extent.XMax
+        opposite_y = desc.extent.YMax
+        spatial_ref = desc.spatialReference  # Extract spatial reference
 
-            # Step 7: Compute statistics
-            if values:
-                if statistics_type == "MEAN":
-                    stat_value = statistics.mean(values)
-                elif statistics_type == "MEDIAN":
-                    stat_value = statistics.median(values)
-                elif statistics_type == "SUM":
-                    stat_value = sum(values)
-                else:
-                    stat_value = None
+        # Calculate grid width and height
+        grid_width = opposite_x - origin_x
+        grid_height = opposite_y - origin_y
 
-                if stat_value is not None:
-                    arcpy.AddMessage(f"Computed {statistics_type} for ID {unique_id}: {stat_value}")
+        # Calculate number of rows and columns dynamically
+        num_cols = int(grid_width / cell_size_x)
+        num_rows = int(grid_height / cell_size_y)
 
-                    # Step 8: Update all matching rows in the output layer
-                    with arcpy.da.UpdateCursor(output_layer, [column_id, stat_field]) as update_cursor:
-                        for row in update_cursor:
-                            if row[0] in all_selected_ids:
-                                row[1] = stat_value
-                                update_cursor.updateRow(row)
+        fishnet_fc_name = r'memory/fishnet_100'
 
-            # Step 9: Clear selection before the next iteration
-            arcpy.SelectLayerByAttribute_management(input_layer, "CLEAR_SELECTION")
+        # Create fishnet
+        arcpy.management.CreateFishnet(
+            out_feature_class = fishnet_fc_name,
+            origin_coord=f"{origin_x} {origin_y}",
+            y_axis_coord=f"{origin_x} {origin_y + 10}",  # Defines Y-axis direction
+            cell_width=cell_size_x,
+            cell_height=cell_size_y,
+            number_rows=num_rows,
+            number_columns=num_cols,
+            corner_coord=f"{opposite_x} {opposite_y}",
+            labels="NO_LABELS",
+            template="",
+            geometry_type="POLYGON"
+        )
 
-            iteration += 1  # Increment iteration counter
+        # Set the spatial reference of the output fishnet
+        #arcpy.DefineProjection_management(fishnet_fc_name, spatial_ref)
 
-        arcpy.AddMessage(f"Processing completed. {statistics_type} values stored in '{output_layer}'")
+        united = arcpy.analysis.Union([input_layer, fishnet_fc_name ], r'memory/unioned', 'ALL')
+        arcpy.analysis.Clip(united, input_layer, output_layer)
+
+        
+        
+
+
+
+
+        # clear selection for new looping
+        #arcpy.SelectLayerByAttribute_management(input_layer, "CLEAR_SELECTION")
+        
+       
+
+
+        """arcpy.SelectLayerByAttribute_management(input_layer, "NEW_SELECTION", id_query)
+
+        arcpy.AddMessage(f"First-degree neighbors selected: {sorted(first_gen_ids)}")
+
+        # Step 3: Select second-degree neighbors **based on first selection**
+        arcpy.SelectLayerByLocation_management(
+            input_layer, "INTERSECT", input_layer, selection_type="ADD_TO_SELECTION"
+        )
+
+        
+        # Collect IDs from second selection
+        second_gen_ids = set()
+        with arcpy.da.SearchCursor(input_layer, [column_id]) as id_cursor:
+            for row in id_cursor:
+                second_gen_ids.add(row[0])
+
+        # Step 4: Collect all selected IDs (first + second-gen)
+        all_selected_ids = first_gen_ids.union(second_gen_ids)
+
+        # Step 5: Select all features where column_id is in collected IDs
+        id_query = f"{column_id} IN ({', '.join(map(str, all_selected_ids))})"
+        arcpy.AddMessage(f"{column_id} IN ({', '.join(map(str, all_selected_ids))})")
+        
+        arcpy.SelectLayerByAttribute_management(input_layer, "NEW_SELECTION", id_query)
+
+        arcpy.AddMessage(f"Second-degree neighbors selected: {sorted(second_gen_ids)}")
+        
+
+        arcpy.AddMessage(f"Final selection for ID {unique_id}: {sorted(all_selected_ids)}")
+        arcpy.AddMessage(f"Total selected unique IDs: {len(all_selected_ids)}\n")
+
+        arcpy.management.Dissolve(input_layer, output_layer)
+
+        # Step 6: Collect values from the selected features
+        values = []
+        with arcpy.da.SearchCursor(input_layer, [fc_column]) as value_cursor:
+            for row in value_cursor:
+                values.append(row[0])
+
+        # Step 7: Compute statistics
+        if values:
+            if statistics_type == "MEAN":
+                stat_value = statistics.mean(values)
+            elif statistics_type == "MEDIAN":
+                stat_value = statistics.median(values)
+            elif statistics_type == "SUM":
+                stat_value = sum(values)
+            else:
+                stat_value = None
+
+            if stat_value is not None:
+                arcpy.AddMessage(f"Computed {statistics_type} for ID {unique_id}: {stat_value}")
+
+                # Step 8: Update all matching rows in the output layer
+                with arcpy.da.UpdateCursor(output_layer, [column_id, stat_field]) as update_cursor:
+                    for row in update_cursor:
+                        if row[0] in all_selected_ids:
+                            row[1] = stat_value
+                            update_cursor.updateRow(row)
+
+        # Step 9: Clear selection before the next iteration
+        arcpy.SelectLayerByAttribute_management(input_layer, "CLEAR_SELECTION")
+
+        iteration += 1  # Increment iteration counter
+
+        arcpy.AddMessage(f"Processing completed. {statistics_type} values stored in '{output_layer}'")"""
         return

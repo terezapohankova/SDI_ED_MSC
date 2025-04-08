@@ -140,8 +140,8 @@ class PREPROCESS:
         output_layer = parameters[1].valueAsText  # Output feature layer (copy)
         fishnet_size = int(parameters[2].valueAsText)
         
-        cell_size_x = fishnet_size  # Cell width
-        cell_size_y = fishnet_size  # Cell height
+        #cell_size_x = int(fishnet_size)  # Cell width
+        #cell_size_y = int(fishnet_size)  # Cell height
 
         # Get extent and spatial reference of input feature class
         desc = arcpy.Describe(input_layer)
@@ -156,16 +156,16 @@ class PREPROCESS:
         grid_height = opposite_y - origin_y
 
         # Calculate number of rows and columns dynamically
-        num_cols = int(grid_width / cell_size_x) + 1
-        num_rows = int(grid_height / cell_size_y) + 1 
+        num_cols = int(grid_width / fishnet_size) + 1
+        num_rows = int(grid_height / fishnet_size) + 1 
 
         # Create fishnet
         fishnet = arcpy.management.CreateFishnet(
             out_feature_class=r'memory/fishnet',
             origin_coord=f"{origin_x} {origin_y}",
             y_axis_coord=f"{origin_x} {origin_y + 10}",  # Defines Y-axis direction
-            cell_width=cell_size_x,
-            cell_height=cell_size_y,
+            cell_width=fishnet_size,
+            cell_height=fishnet_size,
             number_rows=num_rows,
             number_columns=num_cols,
             corner_coord=f"{opposite_x} {opposite_y}",
@@ -711,7 +711,7 @@ class MW:
         # Get input parameters
         input_layer = parameters[0].valueAsText  # Input feature layer
         output_layer = parameters[1].valueAsText  # Output feature layer (copy)
-        zonal_cell = parameters[2].valueAsText  # User-defined column for unique ID
+        zonal_cell = int(parameters[2].valueAsText)  # User-defined column for unique ID
           # Column to calculate statistics on
 
         # Delete existing output if necessary
@@ -724,8 +724,10 @@ class MW:
         arcpy.AddMessage(f"Copied schema from {input_layer} to {output_layer}")
          
             
+        arcpy.management.RepairGeometry(input_layer, 'DELETE_NULL', 'ESRI')
+        #zonal_cell = 100  # Cell width
 
-        zonal_cell = 100  # Cell width
+
     
         # Get extent and spatial reference of input feature class
         desc = arcpy.Describe(input_layer)
@@ -734,6 +736,9 @@ class MW:
         opposite_x = desc.extent.XMax
         opposite_y = desc.extent.YMax
         spatial_ref = desc.spatialReference  # Extract spatial reference
+
+        
+
 
         # Calculate grid width and height
         grid_width = opposite_x - origin_x
@@ -744,6 +749,8 @@ class MW:
         num_rows = int(grid_height / zonal_cell)
 
         fishnet_fc_name = r'memory/fishnet_100'
+
+        
 
         # Create fishnet
         arcpy.management.CreateFishnet(
@@ -759,6 +766,12 @@ class MW:
             template="",
             geometry_type="POLYGON"
         )
+
+        # Check if spatial reference is defined
+        if spatial_ref.name == "Unknown":
+            arcpy.management.DefineProjection(fishnet_fc_name, spatial_ref)
+            #raise ValueError("Input layer has no defined spatial reference system. Please define projection first.")
+            
 
         # Set the spatial reference of the output fishnet
         #arcpy.DefineProjection_management(fishnet_fc_name, spatial_ref)

@@ -606,77 +606,99 @@ class MW:
         small_col = parameters[3].valueAsText  # Statistics type (MEAN, MEDIAN, SUM)
         fc_column = parameters[4].valueAsText  # Column to calculate statistics on
 
-        # Delete existing output if necessary
-        if arcpy.Exists(output_layer):
-            arcpy.management.Delete(output_layer)
-            arcpy.AddMessage(f"Deleted existing output layer: {output_layer}")
 
         # Copy input schema to create output layer
-        arcpy.management.CopyFeatures(input_layer, output_layer)
-        arcpy.AddMessage(f"Copied schema from {input_layer} to {output_layer}")
+        #arcpy.management.CopyFeatures(input_layer, output_layer)
+        #arcpy.AddMessage(f"Copied schema from {input_layer} to {output_layer}")
         
         # Check and repair geometry
         arcpy.management.RepairGeometry(input_layer, 'DELETE_NULL', 'ESRI')
         #arcpy.management.SelectLayerByAttribute(input_layer, {"NEW_SELECTION"}, {where_clause}, {invert_where_clause})
 
-        # Use a set to collect unique IDs
+        # Step 0: Build list of all unique IDs
         unique_ids = set()
-
-        # First, collect all unique IDs
         with arcpy.da.SearchCursor(input_layer, [small_col]) as cursor:
             for row in cursor:
                 unique_ids.add(row[0])
 
         for current_id in unique_ids:
-            # Step 1: Select the center feature by attribute
-            sql_center = f"{arcpy.AddFieldDelimiters(input_layer, small_col)} = {current_id}"
-            arcpy.management.SelectLayerByAttribute(input_layer, "NEW_SELECTION", sql_center)
-            arcpy.AddMessage(f"Selected center ID: {current_id}")
+            arcpy.AddMessage(f"\nProcessing ID: {current_id}")
 
-            # Step 2: Select features intersecting the center (first added selection)
+            # 1. Make a layer from input
+            arcpy.management.MakeFeatureLayer(input_layer, "input_layer_lyr")
+
+            # 2. Select current feature by ID
+            id_clause = f"{small_col} = '{current_id}'" if isinstance(current_id, str) else f"{small_col} = {current_id}"
+            arcpy.management.SelectLayerByAttribute("input_layer_lyr", "NEW_SELECTION", id_clause)
+
+            # 3. First-order spatial neighbors
+            arcpy.management.MakeFeatureLayer(input_layer, "first_neighbors_lyr")
             arcpy.management.SelectLayerByLocation(
-                input_layer,
+                "first_neighbors_lyr",
                 "INTERSECT",
-                input_layer,
-                selection_type="ADD_TO_SELECTION"  # Add to center selection
+                "input_layer_lyr",
+                selection_type="NEW_SELECTION"
             )
 
-            # Save the first added selection IDs (excluding center)
-            first_added_ids = []
-            with arcpy.da.SearchCursor(input_layer, [small_col], where_clause=f"{arcpy.AddFieldDelimiters(input_layer, small_col)} <> {current_id}") as cursor:
+            # 4. Get 1st-order neighbor IDs (excluding current_id)
+            first_neighbor_ids = set()
+            with arcpy.da.SearchCursor("first_neighbors_lyr", [small_col]) as cursor:
                 for row in cursor:
-                    # Check if the feature is selected
-                    if arcpy.management.GetCount(input_layer).getOutput(0) == 0:
-                        continue
-                    first_added_ids.append(row[0])
-            arcpy.AddMessage(f"First added selection IDs touching center {current_id}: {first_added_ids}")
+                    if row[0] != current_id:
+                        first_neighbor_ids.add(row[0])
 
-            # Step 3: Select features intersecting the first added selection (second added selection)
-            if first_added_ids:
-                # Select first added features by attribute
-                formatted_ids = ",".join([str(id) for id in first_added_ids])
-                sql_first_added = f"{arcpy.AddFieldDelimiters(input_layer, small_col)} IN ({formatted_ids})"
-                arcpy.management.SelectLayerByAttribute(input_layer, "NEW_SELECTION", sql_first_added)
+            if not first_neighbor_ids:
+                arcpy.AddMessage(f"No first-order neighbors found for ID {current_id}.")
+                continue
 
-                # Select features intersecting the first added features (second added selection)
-                arcpy.management.SelectLayerByLocation(
-                    input_layer,
-                    "INTERSECT",
-                    input_layer,
-                    selection_type="NEW_SELECTION"
-                )
+            # 5. Select all features with 1st-order neighbor IDs (as input for 2nd-order)
+            id_clauses_1st = []
+            for nid in first_neighbor_ids:
+                clause = f"{small_col} = '{nid}'" if isinstance(nid, str) else f"{small_col} = {nid}"
+                id_clauses_1st.append(clause)
+            where_clause_1st = " OR ".join(id_clauses_1st)
 
-                # Remove first added features from second added selection to keep them separate
-                arcpy.management.SelectLayerByAttribute(input_layer, "REMOVE_FROM_SELECTION", sql_first_added)
+            arcpy.management.SelectLayerByAttribute("input_layer_lyr", "NEW_SELECTION", where_clause_1st)
 
-                # Remove center feature as well to keep them separate
-                arcpy.management.SelectLayerByAttribute(input_layer, "REMOVE_FROM_SELECTION", sql_center)
+            # 6. Second-order spatial neighbors
+            arcpy.management.MakeFeatureLayer(input_layer, "second_neighbors_lyr")
+            arcpy.management.SelectLayerByLocation(
+                "second_neighbors_lyr",
+                "INTERSECT",
+                "input_layer_lyr",
+                selection_type="NEW_SELECTION"
+            )
 
-                # Get second added selection IDs
-                second_added_ids = []
-                with arcpy.da.SearchCursor(input_layer, [small_col]) as cursor:
-                    for row in cursor:
-                        second_added_ids.append(row[0])
-                arcpy.AddMessage(f"Second added selection IDs touching first added: {second_added_ids}")
-            else:
-                arcpy.AddMessage("No features touching the center, so no second added selection.")
+            # 7. Get IDs of 2nd-order neighbors (excluding current and 1st-order IDs)
+            second_neighbor_ids = set()
+            with arcpy.da.SearchCursor("second_neighbors_lyr", [small_col]) as cursor:
+                for row in cursor:
+                    if row[0] != current_id and row[0] not in first_neighbor_ids:
+                        second_neighbor_ids.add(row[0])
+
+            # Combine 1st- and 2nd-order neighbor IDs
+            
+            all_neighbor_ids = first_neighbor_ids.union(second_neighbor_ids)
+            all_neighbor_ids.add(current_id)
+
+            arcpy.AddMessage(f"Found {len(all_neighbor_ids)} total neighbors for ID {current_id}")
+
+            # 8. Select all features with those neighbor IDs
+            if not all_neighbor_ids:
+                arcpy.AddMessage(f"No neighbors of neighbors found for ID {current_id}.")
+                continue
+
+            final_id_clauses = []
+            for nid in all_neighbor_ids:
+                clause = f"{small_col} = '{nid}'" if isinstance(nid, str) else f"{small_col} = {nid}"
+                final_id_clauses.append(clause)
+            final_where_clause = " OR ".join(final_id_clauses)
+
+            # Final selection
+            arcpy.management.SelectLayerByAttribute("input_layer_lyr", "NEW_SELECTION", final_where_clause)
+
+            # 9. Save result
+            out_fc = f"nei2_{current_id}"  # Replace with valid output path if needed
+            arcpy.management.CopyFeatures("input_layer_lyr", out_fc)
+
+            arcpy.AddMessage(f"Saved 2nd-order neighbors for ID {current_id} to {out_fc}")

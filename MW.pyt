@@ -110,9 +110,7 @@ class ED(object):
     
         GRID_ID = parameters[2].valueAsText
         GRID_SIDES = parameters[3].valueAsText
-        
-        #OUTPUT_TABLE = parameters[4].valueAsText
-        
+            
         # Define new field names
         LAND_LENGTH_FIELD_NAME = "L_LAND"  # perimeter of landpatch (all sides)
         LAND_AREA_FIELD_NAME = "A_LAND"
@@ -121,9 +119,7 @@ class ED(object):
         GRID_LENGTH_FIELD_NAME = "L_GRID" # perimeter of gridcell (all sides)
         
         #names for tool polygon neighbours to detect shared borders
-        SHARED_BORDER_FIELD_NAME = "LENGTH"
-        SHARED_BORDER_ID = "src_Id"
-                
+        SHARED_BORDER_FIELD_NAME = "LENGTH"                
         ED_FIELD_NAME = "EDGE_DENS"
         
         # Define datype for fields
@@ -631,14 +627,56 @@ class MW:
             for row in cursor:
                 unique_ids.add(row[0])
 
-        # Now iterate through the unique IDs and select each one
         for current_id in unique_ids:
-            sql_expression = f"{arcpy.AddFieldDelimiters(input_layer, small_col)} = {current_id}"
-            arcpy.management.SelectLayerByAttribute(input_layer, "NEW_SELECTION", sql_expression)
+            # Step 1: Select the center feature by attribute
+            sql_center = f"{arcpy.AddFieldDelimiters(input_layer, small_col)} = {current_id}"
+            arcpy.management.SelectLayerByAttribute(input_layer, "NEW_SELECTION", sql_center)
+            arcpy.AddMessage(f"Selected center ID: {current_id}")
 
-            # Optional: Do something with the selected feature(s) here
-            arcpy.AddMessage(f"Selected ID: {current_id}")
+            # Step 2: Select features intersecting the center (first added selection)
+            arcpy.management.SelectLayerByLocation(
+                input_layer,
+                "INTERSECT",
+                input_layer,
+                selection_type="ADD_TO_SELECTION"  # Add to center selection
+            )
 
+            # Save the first added selection IDs (excluding center)
+            first_added_ids = []
+            with arcpy.da.SearchCursor(input_layer, [small_col], where_clause=f"{arcpy.AddFieldDelimiters(input_layer, small_col)} <> {current_id}") as cursor:
+                for row in cursor:
+                    # Check if the feature is selected
+                    if arcpy.management.GetCount(input_layer).getOutput(0) == 0:
+                        continue
+                    first_added_ids.append(row[0])
+            arcpy.AddMessage(f"First added selection IDs touching center {current_id}: {first_added_ids}")
 
-            # Optional: Clear selection before the next one
-            arcpy.management.SelectLayerByAttribute(input_layer, "CLEAR_SELECTION")
+            # Step 3: Select features intersecting the first added selection (second added selection)
+            if first_added_ids:
+                # Select first added features by attribute
+                formatted_ids = ",".join([str(id) for id in first_added_ids])
+                sql_first_added = f"{arcpy.AddFieldDelimiters(input_layer, small_col)} IN ({formatted_ids})"
+                arcpy.management.SelectLayerByAttribute(input_layer, "NEW_SELECTION", sql_first_added)
+
+                # Select features intersecting the first added features (second added selection)
+                arcpy.management.SelectLayerByLocation(
+                    input_layer,
+                    "INTERSECT",
+                    input_layer,
+                    selection_type="NEW_SELECTION"
+                )
+
+                # Remove first added features from second added selection to keep them separate
+                arcpy.management.SelectLayerByAttribute(input_layer, "REMOVE_FROM_SELECTION", sql_first_added)
+
+                # Remove center feature as well to keep them separate
+                arcpy.management.SelectLayerByAttribute(input_layer, "REMOVE_FROM_SELECTION", sql_center)
+
+                # Get second added selection IDs
+                second_added_ids = []
+                with arcpy.da.SearchCursor(input_layer, [small_col]) as cursor:
+                    for row in cursor:
+                        second_added_ids.append(row[0])
+                arcpy.AddMessage(f"Second added selection IDs touching first added: {second_added_ids}")
+            else:
+                arcpy.AddMessage("No features touching the center, so no second added selection.")

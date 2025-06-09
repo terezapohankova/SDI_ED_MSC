@@ -618,7 +618,26 @@ class MW:
         # Copy input schema to create output layer
         arcpy.management.CopyFeatures(input_layer, output_layer)
         arcpy.AddMessage(f"Copied schema from {input_layer} to {output_layer}")
-
         
+        # Check and repair geometry
+        arcpy.management.RepairGeometry(input_layer, 'DELETE_NULL', 'ESRI')
+        #arcpy.management.SelectLayerByAttribute(input_layer, {"NEW_SELECTION"}, {where_clause}, {invert_where_clause})
 
-       
+        # Use a set to collect unique IDs
+        unique_ids = set()
+
+        # First, collect all unique IDs
+        with arcpy.da.SearchCursor(input_layer, [large_col]) as cursor:
+            for row in cursor:
+                unique_ids.add(row[0])
+
+        # Now iterate through the unique IDs and select each one
+        for current_id in unique_ids:
+            sql_expression = f"{arcpy.AddFieldDelimiters(input_layer, large_col)} = {current_id}"
+            arcpy.management.SelectLayerByAttribute(input_layer, "NEW_SELECTION", sql_expression)
+
+            # Optional: Do something with the selected feature(s) here
+            print(f"Selected ID: {current_id}")
+
+            # Optional: Clear selection before the next one
+            arcpy.management.SelectLayerByAttribute(input_layer, "CLEAR_SELECTION")

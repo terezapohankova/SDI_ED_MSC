@@ -1006,7 +1006,7 @@ class SDI_MW:
         input_layer = parameters[0].valueAsText
         output_layer = parameters[1].valueAsText
         small_col = parameters[2].valueAsText
-        grid_sides = parameters[3].value  # you might want to use this if relevant later
+        grid_sides = parameters[3].value  # Currently unused
 
         SDI_MW_NAME = "SDI_MW"
 
@@ -1059,105 +1059,121 @@ class SDI_MW:
             subset_fc = os.path.join("in_memory", f"subset_{current_id}")
             arcpy.management.CopyFeatures("input_layer_lyr", subset_fc)
 
-            # Calculate shared borders
-            polygon_neighb = os.path.join("in_memory", f"neighb_{current_id}")
-            arcpy.analysis.PolygonNeighbors(
-                subset_fc,
-                polygon_neighb,
-                small_col,
-                area_overlap="NO_AREA_OVERLAP",
-                both_sides="NO_BOTH_SIDES",
-                out_area_units="SQUARE_METERS"
-            )
+            SHAPE_AREA_FIELD_NAME = "AREA_M"
+            LANDSCAPE_PROPORTION_FIELD_NAME = "pi"
+            LN_MULTIPLY_PROPORTION = "pilnpi"
+            SHANON_INDEX = "SDI"
+            FIELD_TYPE = "DOUBLE"
 
-            arcpy.management.AlterField(polygon_neighb, f"src_{small_col}", small_col, small_col)
-
-            arcpy.management.JoinField(
-                subset_fc,
-                small_col,
-                polygon_neighb,
-                small_col,
-                ["LENGTH"]
-            )
-
-            with arcpy.da.UpdateCursor(subset_fc, ["LENGTH"]) as cursor:
-                for row in cursor:
-                    if row[0] is None:
-                        row[0] = 0
-                    cursor.updateRow(row)
-
-            # Geometry attributes
+            # Calculate area of each patch
             arcpy.management.CalculateGeometryAttributes(
                 subset_fc,
-                [["L_LAND", "PERIMETER_LENGTH"], ["A_LAND", "AREA"]],
-                length_unit="METERS",
+                [[SHAPE_AREA_FIELD_NAME, "AREA"]],
                 area_unit="SQUARE_METERS"
             )
 
-            # Summary stats
-            summary_table = os.path.join("in_memory", f"summary_{current_id}")
+            # Summarize total area per ID
+            summary_table_sdi = os.path.join("in_memory", f"summary_area_{current_id}")
             arcpy.analysis.Statistics(
                 subset_fc,
-                summary_table,
-                [["L_LAND", "SUM"], ["A_LAND", "SUM"]],
+                summary_table_sdi,
+                [[SHAPE_AREA_FIELD_NAME, "SUM"]],
                 small_col
             )
 
+            # Join SUM_AREA back to subset_fc
             arcpy.management.JoinField(
                 subset_fc,
                 small_col,
-                summary_table,
+                summary_table_sdi,
                 small_col,
-                ["SUM_L_LAND", "SUM_A_LAND"]
+                [f"SUM_{SHAPE_AREA_FIELD_NAME}"]
             )
 
-            # Calculate grid area and perimeter using exponentiation for sqrt
-            arcpy.management.CalculateField(subset_fc, "A_GRID", "!SUM_A_LAND!", "PYTHON3")
-            arcpy.management.CalculateField(subset_fc, "L_GRID", "!SUM_A_LAND! ** 0.5 * 4", "PYTHON3")
-
-            expression = """(
-            float(str(!SUM_L_LAND!).replace(',', '.')) -
-            float(str(!L_GRID!).replace(',', '.')) -
-            float(str(!LENGTH!).replace(',', '.'))
-            ) / float(str(!A_GRID!).replace(',', '.'))"""
-
+            # Calculate pi = patch area / total area
             arcpy.management.CalculateField(
                 subset_fc,
-                SDI_MW_NAME,
-                expression,
-                expression_type="PYTHON3")
+                LANDSCAPE_PROPORTION_FIELD_NAME,
+                expression=f"!{SHAPE_AREA_FIELD_NAME}! / !SUM_{SHAPE_AREA_FIELD_NAME}!",
+                expression_type="PYTHON3",
+                field_type=FIELD_TYPE
+            )
 
-            # Get value for focal feature
-            edge_density = None
-            with arcpy.da.SearchCursor(subset_fc, [small_col, SDI_MW_NAME]) as cursor:
+            # Calculate pi * ln(pi)
+            arcpy.management.CalculateField(
+                subset_fc,
+                LN_MULTIPLY_PROPORTION,
+                expression=f"!{LANDSCAPE_PROPORTION_FIELD_NAME}! * math.log(!{LANDSCAPE_PROPORTION_FIELD_NAME}!)",
+                expression_type="PYTHON3",
+                field_type=FIELD_TYPE
+            )
+
+            # Sum pilnpi per group
+            summary_table_pilnpi = os.path.join("in_memory", f"summary_pilnpi_{current_id}")
+            arcpy.analysis.Statistics(
+                subset_fc,
+                summary_table_pilnpi,
+                [[LN_MULTIPLY_PROPORTION, "SUM"]],
+                small_col
+            )
+
+            # Join pilnpi back
+            arcpy.management.JoinField(
+                subset_fc,
+                small_col,
+                summary_table_pilnpi,
+                small_col,
+                [f"SUM_{LN_MULTIPLY_PROPORTION}"]
+            )
+
+            # Calculate final SDI = -1 * SUM_pilnpi
+            arcpy.management.CalculateField(
+                subset_fc,
+                SHANON_INDEX,
+                expression=f"!SUM_{LN_MULTIPLY_PROPORTION}! * -1",
+                expression_type="PYTHON3",
+                field_type=FIELD_TYPE
+            )
+
+            # Get SDI value for current_id
+            sdi_value = None
+            with arcpy.da.SearchCursor(subset_fc, [small_col, SHANON_INDEX]) as cursor:
                 for row in cursor:
                     if row[0] == current_id:
-                        edge_density = row[1]
+                        sdi_value = row[1]
                         break
 
-            if edge_density is not None:
-                existing_fields = [f.name for f in arcpy.ListFields("input_layer_lyr")]
-                if SDI_MW_NAME not in existing_fields:
-                    arcpy.management.AddField("input_layer_lyr", SDI_MW_NAME, "DOUBLE")
+            # Optionally clean up intermediate fields
+            arcpy.management.DeleteField(
+                subset_fc,
+                [SHAPE_AREA_FIELD_NAME, LANDSCAPE_PROPORTION_FIELD_NAME, LN_MULTIPLY_PROPORTION,
+                f"SUM_{SHAPE_AREA_FIELD_NAME}", f"SUM_{LN_MULTIPLY_PROPORTION}"],
+                "DELETE_FIELDS"
+            )
 
-                with arcpy.da.UpdateCursor("input_layer_lyr", [small_col, SDI_MW_NAME]) as cursor:
+            # Select focal feature only again
+            clause_current = f"{small_col} = '{current_id}'" if isinstance(current_id, str) else f"{small_col} = {current_id}"
+            arcpy.management.SelectLayerByAttribute("input_layer_lyr", "NEW_SELECTION", clause_current)
+
+            out_fc = os.path.join("in_memory", f"ed_{current_id}")
+            if arcpy.Exists(out_fc):
+                arcpy.Delete_management(out_fc)
+
+            arcpy.management.CopyFeatures("input_layer_lyr", out_fc)
+
+            # Add SDI_MW field if not exists
+            field_names = [f.name for f in arcpy.ListFields(out_fc)]
+            if SDI_MW_NAME not in field_names:
+                arcpy.management.AddField(out_fc, SDI_MW_NAME, "DOUBLE")
+
+            # Write SDI value to SDI_MW field
+            if sdi_value is not None:
+                with arcpy.da.UpdateCursor(out_fc, [SDI_MW_NAME]) as cursor:
                     for row in cursor:
-                        if row[0] == current_id:
-                            row[1] = edge_density
-                            cursor.updateRow(row)
-                # no break here, updates all matching rows
+                        row[0] = sdi_value
+                        cursor.updateRow(row)
 
-
-                # Select focal feature only
-                clause_current = f"{small_col} = '{current_id}'" if isinstance(current_id, str) else f"{small_col} = {current_id}"
-                arcpy.management.SelectLayerByAttribute("input_layer_lyr", "NEW_SELECTION", clause_current)
-
-                out_fc = os.path.join("in_memory", f"ed_{current_id}")
-                if arcpy.Exists(out_fc):
-                    arcpy.Delete_management(out_fc)
-
-                arcpy.management.CopyFeatures("input_layer_lyr", out_fc)
-                merged_outputs.append(out_fc)
+            merged_outputs.append(out_fc)
 
         # Merge all output features
         if merged_outputs:
